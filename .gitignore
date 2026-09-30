@@ -1,0 +1,13 @@
+# Nix build outputs
+result
+result-*
+
+# Diagnostic/log files
+*.log
+logs/
+
+# IDE / editor
+.direnv
+
+# the deb package
+chatgpt_amd64.deb
