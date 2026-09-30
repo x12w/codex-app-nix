@@ -1,5 +1,5 @@
-# OpenAI Codex desktop app ("ChatGPT for Linux"), repackaged from the official
-# Debian package published at
+# OpenAI Codex desktop app ("ChatGPT for Linux"), repackaged from the Debian
+# package OpenAI publishes at
 #   https://persistent.oaistatic.com/codex-app-prod/linux/deb
 #
 # The archive ships a self-contained Electron/Chromium runtime plus the Codex
@@ -10,6 +10,7 @@
   lib,
   stdenv,
   binutils,
+  fetchurl,
   autoPatchelfHook,
   makeWrapper,
   xz,
@@ -57,6 +58,13 @@
 }:
 
 let
+  # Both of these are refreshed from the signed repository index by update.sh.
+  version = "26.928.21956";
+  src = fetchurl {
+    url = "https://persistent.oaistatic.com/codex-app-prod/linux/deb/pool/main/c/chatgpt/chatgpt_${version}_amd64.deb";
+    hash = "sha256-msjQcRtGATaNSd7dv1Co/lI1jLYbbZ96XBi0HtRQCtg=";
+  };
+
   runtimeLibs = [
     alsa-lib
     at-spi2-atk
@@ -92,7 +100,11 @@ let
     pango
     systemd # libudev
     vulkan-loader
-  ] ++ lib.optionals withQtShims [ qt5.qtbase qt6.qtbase ];
+  ]
+  ++ lib.optionals withQtShims [
+    qt5.qtbase
+    qt6.qtbase
+  ];
 
   libPath = lib.makeLibraryPath runtimeLibs;
 
@@ -111,9 +123,7 @@ let
 in
 stdenv.mkDerivation {
   pname = "chatgpt";
-  version = "26.928.20755";
-
-  src = ./chatgpt_amd64.deb;
+  inherit version src;
 
   strictDeps = true;
 
@@ -178,6 +188,8 @@ stdenv.mkDerivation {
       --set GDK_PIXBUF_MODULE_FILE "${gdk-pixbuf}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache" \
       --set GSETTINGS_SCHEMA_DIR "${glib}/share/glib-2.0/schemas"
   '';
+
+  passthru.updateScript = ./update.sh;
 
   meta = {
     description = "Desktop application for OpenAI Codex";

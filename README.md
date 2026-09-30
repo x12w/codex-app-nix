@@ -17,6 +17,9 @@ macOS 版，Linux 版此前没有打包。
 tectonic 等，都在 `lib/chatgpt/resources/` 下。本包只做两件事：把运行时重新链接到 Nix store，
 以及生成一个指向正确库/数据目录的启动器。
 
+deb 由 `fetchurl` 直接从 OpenAI 的软件源拉取（就是 `.deb` 的 postinst 会写进
+`/etc/apt/sources.list.d/chatgpt.sources` 的那个源），仓库里不再存放二进制。
+
 ## 使用
 
 ### 直接运行
@@ -94,17 +97,17 @@ glibc 系统上永远不会被选中，`autoPatchelf` 会跳过对它们的链�
 
 ## 更新
 
-1. 从 <https://persistent.oaistatic.com/codex-app-prod/linux/deb> 下载新的 deb
-   （文件名形如 `chatgpt_amd64.deb`）
-2. 替换本目录下的 deb
-3. 更新 `package.nix` 里的 `version`
-4. `nix build .#chatgpt`
-
-版本号可以从 deb 的 control 段读到：
-
 ```bash
-nix shell nixpkgs#dpkg --command dpkg-deb -f chatgpt_amd64.deb Version
+./update.sh
+nix build .#chatgpt
 ```
+
+`update.sh` 从软件源的 `dists/stable/main/binary-amd64/Packages` 索引里读出最新的
+`Version` 和 `SHA256`，把后者转成 SRI 后写回 `package.nix`。需要 `curl` 和 `nix`。
+
+因为是定值输出（FOD），哈希对不上时构建会直接失败，不会静默拿到别的东西。
+
+也可以手动改 `package.nix` 顶部的 `version` 和 `hash` 两项——它们放在一起就是为了这个。
 
 ## 免责声明
 

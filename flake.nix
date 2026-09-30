@@ -23,6 +23,12 @@
         ln -s ${chatgpt}/lib/chatgpt/resources/codex "$out/bin/codex"
         ln -s ${chatgpt}/lib/chatgpt/resources/rg "$out/bin/rg"
       '';
+
+      codexApp = {
+        type = "app";
+        program = "${chatgpt}/bin/chatgpt";
+        meta.description = "Launch the OpenAI Codex desktop app";
+      };
     in
     {
       packages.${system} = {
@@ -32,17 +38,14 @@
       };
 
       apps.${system} = {
-        chatgpt = {
-          type = "app";
-          program = "${chatgpt}/bin/chatgpt";
-        };
-        default = self.apps.${system}.chatgpt;
+        chatgpt = codexApp;
+        default = codexApp;
       };
 
       overlays.default = final: _prev: {
         chatgpt = final.callPackage ./package.nix { };
       };
 
-      formatter.${system} = pkgs.nixfmt-rfc-style;
+      formatter.${system} = pkgs.nixfmt;
     };
 }
