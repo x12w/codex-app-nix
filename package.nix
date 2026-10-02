@@ -13,6 +13,7 @@
   fetchurl,
   autoPatchelfHook,
   makeWrapper,
+  python3,
   xz,
   # Chromium only dlopen()s the bundled libqt{5,6}_shim.so when it is asked to
   # use the Qt platform backend, so pulling in a full Qt is opt-in.
@@ -173,6 +174,11 @@ stdenv.mkDerivation {
     # session's XDG_DATA_DIRS, so the launcher has to be addressed absolutely.
     substituteInPlace "$out/share/applications/chatgpt.desktop" \
       --replace-fail 'Exec=chatgpt' "Exec=$out/bin/chatgpt"
+
+    # NixOS has no /usr/bin/ldd. detect-libc falls back to getReport(),
+    # whose gnu_get_libc_version call trips this Electron build's CFI check.
+    # This derivation already links against glibc; select that watcher ABI.
+    ${python3}/bin/python3 ${./patch-chatgpt-watcher.py} "$appdir/resources/app.asar"
 
     runHook postInstall
   '';
