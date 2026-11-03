@@ -4,8 +4,8 @@
 #
 # The archive ships a self-contained Electron/Chromium runtime plus the Codex
 # agent itself under lib/chatgpt/resources (codex, rg, node, tectonic, ...).
-# Everything below only relinks that runtime against the Nix store and installs
-# a wrapper that points the process at the right library/data directories.
+# Relink that runtime, apply NixOS compatibility fixes, and install a wrapper
+# that points the process at the right library/data directories.
 {
   lib,
   stdenv,
@@ -14,6 +14,7 @@
   autoPatchelfHook,
   makeWrapper,
   python3,
+  nodejs,
   xz,
   # Chromium only dlopen()s the bundled libqt{5,6}_shim.so when it is asked to
   # use the Qt platform backend, so pulling in a full Qt is opt-in.
@@ -132,6 +133,7 @@ stdenv.mkDerivation {
     binutils
     autoPatchelfHook
     makeWrapper
+    nodejs
     xz
   ];
 
@@ -180,7 +182,20 @@ stdenv.mkDerivation {
     # This derivation already links against glibc; select that watcher ABI.
     ${python3}/bin/python3 ${./patch-chatgpt-watcher.py} "$appdir/resources/app.asar"
 
+    # Nix store resources are read-only. Node's recursive copy preserves those
+    # modes, so plugin initialization and failure cleanup would both get EACCES
+    # and leave another staging copy on every window focus.
+    ${python3}/bin/python3 ${./patch-chatgpt-bundled-plugins.py} "$appdir/resources/app.asar"
+
     runHook postInstall
+  '';
+
+  doInstallCheck = true;
+  installCheckPhase = ''
+    runHook preInstallCheck
+    ${python3}/bin/python3 ${./test-chatgpt-bundled-plugins.py} \
+      ${./patch-chatgpt-bundled-plugins.py} "$out/lib/chatgpt/resources/app.asar"
+    runHook postInstallCheck
   '';
 
   # The bundled native modules (better-sqlite3, node-pty, node-hid, ...) are

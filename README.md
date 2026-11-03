@@ -14,8 +14,8 @@ macOS 版，Linux 版此前没有打包。
 | `codex-cli` | 应用内置的 Codex agent 与 ripgrep，单独暴露，`bin/codex` + `bin/rg` |
 
 应用自带了完整的 Electron/Chromium 运行时，以及 Codex agent（`codex`）、ripgrep、Node.js、
-tectonic 等，都在 `lib/chatgpt/resources/` 下。本包只做两件事：把运行时重新链接到 Nix store，
-以及生成一个指向正确库/数据目录的启动器。
+tectonic 等，都在 `lib/chatgpt/resources/` 下。本包把运行时重新链接到 Nix store，
+修补 NixOS 兼容问题，并生成一个指向正确库/数据目录的启动器。
 
 deb 由 `fetchurl` 直接从 OpenAI 的软件源拉取（就是 `.deb` 的 postinst 会写进
 `/etc/apt/sources.list.d/chatgpt.sources` 的那个源），仓库里不再存放二进制。
@@ -94,6 +94,26 @@ glibc 系统上永远不会被选中，`autoPatchelf` 会跳过对它们的链�
 ### 数据目录
 
 `~/.config/Codex`（Electron 的 `owl-app.ini` 里 `UserDataDirectoryName=Codex`）。
+
+### 内置插件的只读权限
+
+Nix store 中的插件目录和文件分别是 `555` / `444`。应用复制插件时会保留这些权限，
+导致修改插件配置和删除失败副本都报 `EACCES`；窗口再次获得焦点时又会重试，
+在 `~/.codex/.tmp/bundled-marketplaces/` 中不断留下 `openai-bundled.staging-*`。
+
+构建时的 `patch-chatgpt-bundled-plugins.py` 修补两处逻辑：复制完成后给副本补上用户写权限，
+删除前给目录补上用户写权限。它跳过符号链接，保留可执行位，并同步更新 ASAR 的文件偏移
+和完整性哈希。上游代码不再匹配时构建会失败，要求重新检查补丁。
+
+`nix build` 会运行回归检查，覆盖只读副本的配置写入、失败清理、符号链接和 ASAR 完整性。
+本地也可运行：
+
+```bash
+python3 test-chatgpt-bundled-plugins.py ./patch-chatgpt-bundled-plugins.py
+```
+
+修复在重新构建并退出旧进程、启动新包后生效。历史遗留副本不会在构建时自动删除；
+这是运行时数据，不属于 Nix 构建的修改范围。
 
 ## 更新
 
