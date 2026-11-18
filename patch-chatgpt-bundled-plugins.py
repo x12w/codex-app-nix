@@ -4,14 +4,25 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import struct
 import sys
 import tempfile
 
 
-COPY = b"await b.default.cp(e,t,{recursive:!0,verbatimSymlinks:!0});return"
-REMOVE = b"await b.default.rm(e.directory,{force:!0,maxRetries:5,recursive:!0,retryDelay:100})"
+IDENTIFIER = rb"[A-Za-z_$][A-Za-z0-9_$]*"
+FS_ACCESSOR = IDENTIFIER + rb"(?:\.default|\(\))"
+COPY = re.compile(
+    rb"await (?P<fs>" + FS_ACCESSOR + rb")\.cp\("
+    rb"(?P<source>" + IDENTIFIER + rb"),(?P<target>" + IDENTIFIER + rb"),"
+    rb"\{recursive:!0,verbatimSymlinks:!0\}\)"
+)
+REMOVE = re.compile(
+    rb"await (?P<fs>" + FS_ACCESSOR + rb")\.rm\("
+    rb"(?P<entry>" + IDENTIFIER + rb")\.directory,"
+    rb"\{force:!0,maxRetries:5,recursive:!0,retryDelay:100\}\)"
+)
 HELPER_NAME = b"__nixMakeBundledPluginWritable"
 HELPER = b"""
 async function __nixMakeBundledPluginWritable(root, fs, directoriesOnly = false) {
@@ -72,19 +83,22 @@ def encode_header(header):
     return struct.pack("<II", 4, len(pickle)) + pickle
 
 
-def read_main(path):
+def read_bundle(path):
     with open(path, "rb") as archive:
         header, base = read_header(archive)
-        candidates = [
-            (name, entry)
-            for name, entry in entries(header)
-            if name.startswith(".vite/build/main-") and name.endswith(".js")
-        ]
+        candidates = []
+        # New releases split the main process into early-bootstrap-* chunks.
+        # Locate the plugin operations, not a particular bundler's filename.
+        for name, entry in entries(header):
+            if not (name.startswith(".vite/build/") and name.endswith(".js")):
+                continue
+            archive.seek(base + int(entry["offset"]))
+            data = archive.read(entry["size"])
+            if COPY.search(data) or REMOVE.search(data):
+                candidates.append((name, entry, data))
         if len(candidates) != 1:
-            raise ValueError("Main bundle changed; review the bundled-plugin workaround")
-        name, entry = candidates[0]
-        archive.seek(base + int(entry["offset"]))
-        original = archive.read(entry["size"])
+            raise ValueError("Bundled-plugin bundle changed; review this workaround")
+        name, entry, original = candidates[0]
     return header, base, name, entry, original
 
 
@@ -99,21 +113,29 @@ def copy_bytes(source, target, count):
 
 def patch(path):
     path = Path(path)
-    header, base, name, entry, original = read_main(path)
-    if original.count(COPY) != 1 or original.count(REMOVE) != 1 or HELPER_NAME in original:
+    header, base, name, entry, original = read_bundle(path)
+    copies, removals = list(COPY.finditer(original)), list(REMOVE.finditer(original))
+    if (
+        len(copies) != 1 or len(removals) != 1 or HELPER_NAME in original
+        or copies[0]["fs"] != removals[0]["fs"]
+    ):
         raise ValueError("Bundled-plugin code changed; review this workaround")
     old_integrity = entry.get("integrity", {})
     block_size = old_integrity.get("blockSize", 0)
     if block_size <= 0 or old_integrity != integrity(original, block_size):
-        raise ValueError("Main bundle ASAR integrity check failed")
+        raise ValueError("Bundled-plugin ASAR integrity check failed")
 
-    updated = original.replace(
-        COPY,
-        COPY.removesuffix(b"return")
-        + b"await __nixMakeBundledPluginWritable(t,b.default);return",
-    ).replace(
-        REMOVE,
-        b"await __nixMakeBundledPluginWritable(e.directory,b.default,true);" + REMOVE,
+    # Keep these as expressions: the new Linux branch is `return void await
+    # fs().cp(...)`, so inserting a statement after it would never run.
+    updated = COPY.sub(
+        lambda match: b"(" + match[0] + b",await " + HELPER_NAME
+        + b"(" + match["target"] + b"," + match["fs"] + b"))",
+        original,
+    )
+    updated = REMOVE.sub(
+        lambda match: b"(await " + HELPER_NAME + b"(" + match["entry"]
+        + b".directory," + match["fs"] + b",true)," + match[0] + b")",
+        updated,
     ) + HELPER
     old_offset = int(entry["offset"])
     old_size = entry["size"]
@@ -125,7 +147,7 @@ def patch(path):
     entry["integrity"] = integrity(updated, block_size)
 
     # Rebuild the header and stream the payload: the added helper changes both
-    # the main bundle's length and subsequent entries' offsets. Keep all other
+    # the plugin bundle's length and subsequent entries' offsets. Keep all other
     # payloads, unpacked flags, and per-file integrity metadata intact.
     temporary = None
     try:
